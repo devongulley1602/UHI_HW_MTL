@@ -20,19 +20,32 @@ Public variables:
         - Rotated pole grid values each with shape (280,)
         
     field_keys : array (string)
-        - Keys of fields to analyse
+        - Keys of fields to analyse such as 
+        - Includes 'tas', 'tasmax', 'tasmin', 'hfss', 'hfls'
         
     veg_fields : xarray.core.dataarray.DataArray
         - CLASS vegetation and urban fields to analyse
         
-    veg_levs : array (string)
+    veg_levs : array of type string
         - Tranlsation from the arbitrary level to the names of the veg_fields
 
+    class_fields : array of type xarray.core.dataarray.DataArray
+        - combined and cleaned static CLASS vegetation and urban field data
+
+    TEB_fieldnames : array of type string
+        - Names of the static driving fields for TEB
+
+    TEB_geophys : xarray.core.dataarray.DataArray
+        - combined and cleaned static TEB driving data
+
+    static_fields_C, static_fields_T : xarray.core.dataarray.DataArray
+        - Fixed fields used in CLASS and CLASS+TEB simulations respectively
+    
     is_rural, is_urban : xarray.core.dataarray.DataArray
         - Boolean mask for urban (>50% urban fraction) and rural (<1% urban fraction) areas
 
     stand_chunk : Dict
-        - 91-day chunking applied in time and 280 standard grid units applied in space
+        - 91-time unit chunking applied in time and 280 standard grid units applied in space
 
     pavics : xarray.core.dataset.Dataset
         - ECCC station data available on pavics
@@ -55,6 +68,10 @@ Public functions:
     draw_map : folium.folium.Map
         - Focuses on the simulation area, draws an instantaneous field
 
+    draw_map_layers : folium.folium.Map
+        - Focuses on the simulation area 
+        - Draws a set of fields and includes colourbars as floating toggled by the selected field layer 
+        
     save_zarr(ds) : None
         - Takes an xarray.core.dataset.DataArray and saves to zarr
         
@@ -95,6 +112,7 @@ rotated_pole = ccrs.RotatedPole(pole_longitude=106.425, pole_latitude=44.5)
 
 field_keys = ['tas','tasmax','tasmin','hfss','hfls']
 veg_fields = xr.open_mfdataset('/runoff/gulley/St_Laurent/StLaurent_1km_SL2.5_ERA5_advHU/Fix_Fields/StLaurent_1km_SL2.5_ERA5_advHU_step0.nc')['furban']#.assign_attrs({'long_name':'Static Fields', 'standard_name':'static_fields'})
+
 
 # Populate the dictionary holding fixed fields from the {experiment_name - TEB or CLASS+TEB}/Fix_Fields
 static_fields_C = {}
@@ -146,6 +164,46 @@ veg_levs = { '1':'salt water, ocean',
                 '26':'mixed shrubs'}
 is_rural = veg_fields.sel(lev=21) < 0.01 # Based on metric used by Roberge and Sushama (2018)
 is_urban = veg_fields.sel(lev=21) > 0.5
+class_fields = []
+for num_key in veg_levs.keys():
+    # Format:
+    # veg_fields.sel(lev='5.').rename('evergreen broadleaf trees')
+    class_fields.append(veg_fields.sel(lev=num_key).rename(veg_levs[num_key]))
+for i in range(len(class_fields)):
+    class_fields[i].attrs['units'] = '0-1'
+
+# Names of the static driving fields for TEB
+TEB_fieldnames = ['natural_frac',
+    'building_frac',
+    'building_height',
+    'road_frac',
+    'roof_roughness',
+    'road_roughness',
+    'roof_albedo',
+    'road_albedo',
+    'wall_albedo',
+    'roof_emiss',
+    'road_emiss',
+    'wall_emiss',
+    'roof_heat_cap',
+    'road_heat_cap',
+    'wall_heat_cap',
+    'roof_thermal_cond',
+    'road_thermal_cond',
+    'wall_thermal_cond',
+    'roof_layer_depth',
+    'road_layer_depth',
+    'wall_layer_depth',
+    'traffic_shfx',
+    'traffic_lhfx',
+    'industry_shfx',
+    'industry_lhfx',
+    'town_roughness',
+    'ratio_vert_hor']
+TEB_geophys = [] # Stores the static driving fields for TEB
+for field in TEB_fieldnames:
+    TEB_geophys.append(static_fields_T['geophys'][field])
+
 
 def get_outputs(field,extension,canopy='both'):
     """
@@ -380,7 +438,7 @@ class FloatImageWithID(MacroElement):
         {% endmacro %}
     """)
 
-    def __init__(self, image, position='topleft', width='auto', height='auto', div_id='float-image'):
+    def __init__(self, image, position='bottomleft', width='auto', height='auto', div_id='float-image'):
         super().__init__()
         self._name = 'FloatImage'
         self.image = image
@@ -573,12 +631,13 @@ def draw_map_layers(fields=[],cmap_name_array=[],vmins=[],vmaxs=[],num_level_arr
             overlays[-1].add_to(m)
             
             # Add the colourbar
-            fig, ax = plt.subplots(figsize=(2, 0.2))  # Width x Height in inches
+            fig, ax = plt.subplots(figsize=(4, 0.2))  # Width x Height in inches
 
             # Create the colorbar from ScalarMappable
             cb = fig.colorbar(sm, cax=ax,orientation='horizontal')
             cb.set_ticks([vmin,vmax])
-            cb.set_label(f'{field.name} ({field.attrs['units']})')
+            
+            cb.set_label(f'{field.name} ( {field.attrs['units']})')
             
             # Save colorbar to buffer
             image_buffer_cbar = io.BytesIO()
