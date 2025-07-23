@@ -1,7 +1,8 @@
+"""
+Loads xarray DataArray from .nc, saves as .zarr for faster retrieval another time 
+"""
 from Montreal_UHI_toolbox import save_zarr, get_outputs
-print('Loading data...')
-da_C, da_T = get_outputs('hfss','.nc') # ['tas','tasmax','tasmin','hfss','hfls']
-print('Saving to .zarr')
+
+da_C, da_T = get_outputs('hrss','.nc') # ['tas','huss','tasmax','tasmin','hfss','hfls']
 save_zarr(da_C,'C')
-print('Saving to .zarr')
 save_zarr(da_T,'T')
