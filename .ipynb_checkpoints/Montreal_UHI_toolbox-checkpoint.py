@@ -44,14 +44,17 @@ Public variables:
     is_rural, is_urban : xarray.core.dataarray.DataArray
         - Boolean mask for urban (>50% urban fraction) and rural (<1% urban fraction) areas
 
-    stand_chunk : Dict
-        - 91-time unit chunking applied in time and 280 standard grid units applied in space
-
     pavics : xarray.core.dataset.Dataset
         - ECCC station data available on pavics
 
     stations : xarray.core.dataset.Dataset
         - pavics subset within the simulation domain
+
+    urban_stations, rural_stations : xarray.core.dataset
+        - Stations within the domain masked by urban/reduced-urban fraction  
+
+    stand_chunk : Dict
+        - 91-time unit chunking applied in time and 280 standard grid units applied in space
     
 
 Public functions:
@@ -79,7 +82,10 @@ Public functions:
 from glob import glob
 import numpy as np
 from numcodecs import Blosc
+import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib_scalebar.scalebar import ScaleBar
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import pandas as pd
@@ -289,7 +295,54 @@ try :
     station_locations = stations[['lat', 'lon', 'station_name']].to_dataframe().reset_index()
     geojson_stations = gpd.GeoDataFrame(
         station_locations, geometry=gpd.points_from_xy(station_locations['lon'], station_locations['lat'])
-    ).to_json()    
+    ).to_json()  
+
+    """
+    Using the lat/lon pairs given by the pavics stations (stations xarray dataset) within the domain: 
+        1. Interpolate to the closest rlat/rlon grid point in the simulation
+        2. Compare this point with the urban fraction field
+        3. Classify station as urban or reduced urban (ie rural) with >=0.5 and <0.01 respectively
+        4. Assign coordinate of the mask, as well as the urban fraction itself to each station set
+        
+    Using this method on the PAVICS dataset, on 2025-07-30, this gives:
+        - 5 urban stations
+        - 16 suburban stations
+        - 28 reduced-urban stations       
+        
+    """
+    station_rotated_points = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
+    station_rlon = station_rotated_points[:, 0]
+    station_rlat = station_rotated_points[:, 1]
+    
+    urban_station_mask = is_urban.sel(
+        rlat=xr.DataArray(station_rlat, dims="points"),
+        rlon=xr.DataArray(station_rlon, dims="points"),
+        method='nearest'
+    ).values
+    
+    rural_station_mask =  is_rural.sel(
+        rlat=xr.DataArray(station_rlat, dims="points"),
+        rlon=xr.DataArray(station_rlon, dims="points"),
+        method='nearest'
+    ).values
+
+    urban_fraction = veg_fields.sel(lev=21)
+    station_urban_fraction = urban_fraction.sel(
+        rlat=xr.DataArray(station_rlat, dims="points"),
+        rlon=xr.DataArray(station_rlon, dims="points"),
+        method='nearest'
+    ).values
+
+    stations = stations.assign_coords(is_urban=('station',urban_station_mask),
+                                      is_rural=('station',rural_station_mask),
+                                      urban_fraction=('station',station_urban_fraction))
+    
+    urban_stations = stations.where(stations.is_urban, drop=True)
+    rural_stations = stations.where(stations.is_rural, drop=True)
+    subur_stations = stations.where(stations.is_rural==stations.is_urban, drop=True)
+
+
+    
 except OSError:
     print('Error loading PAVICS')
 
@@ -674,27 +727,174 @@ def draw_map_layers(fields=[],cmap_name_array=[],vmins=[],vmaxs=[],num_level_arr
     m.get_root().add_child(ColorbarToggleScript(field_names))
     return m
 
-
-def add_map_features(plt):
+def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6):
     """
-    Set axis to include map features as a subplot on a matplotlib.plot.
+    Plots a 2D xarray DataArray field over a map with a discrete colorbar and regional political and lake features.
     
+    Parameters
+    ----------
+    field : xarray.DataArray
+        2D field to plot over the map domain.
+    cmap : str
+        Name of the matplotlib colormap to use.
+    vmin, vmax : float
+        Minimum and maximum values for color normalization.
+    cbar_label : str
+        Label for the colorbar.
+    title : str
+        Title to display above the map.
+    proj : cartopy.crs.Projection
+        Cartopy coordinate reference system (CRS) for the map projection.
+    feature_colours : str
+        Colour for map features such as coastlines, gridlines, and borders.
+    extend : str
+        Colorbar extension type. Options: 'min', 'max', 'both', or 'neither'.
+    spacing : str
+        Colorbar spacing mode. Options: 'uniform' or 'proportional'.
+    bins : list of float
+        Discrete bin edges to categorize field values for the colormap.
+    labelsize : float
+        Font size for colorbar tick labels.
+    
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The matplotlib Figure object containing the map.
+    ax : cartopy.mpl.geoaxes.GeoAxes
+        The Cartopy GeoAxes on which the data are plotted.
+    cb : matplotlib.colorbar.Colorbar
+        The colorbar associated with the plot.
+    
+    Notes
+    -----
+    - If `bins` is not provided, they can be inferred using `vmin`, `vmax`, and number of levels.
+    - Designed for use with CLASS lake features compatible with Cartopy projections.
+    """
+
+    
+    if proj == None:
+        proj = ccrs.NearsidePerspective(central_longitude=centre_lon, central_latitude=centre_lat)
+        # proj = ccrs.RotatedPole(pole_longitude=106.425, pole_latitude=44.5)
+        # proj = ccrs.Orthographic(central_longitude=centre_lon, central_latitude=centre_lat)
+    
+    fig, ax = plt.subplots(figsize=(10,10),subplot_kw={'projection': proj})
+    
+    # Add features from smoothed CLASS contours
+    # This was selected arbitrarily until a map emerged that was regionally recognisable
+    lake_features = ax.contour(lons,lats,veg_fields.sel(lev='3'),transform=ccrs.PlateCarree(),
+                               levels=[0.2,1.0],#np.linspace(0.2,1.0,1),
+                               colors=feature_colours,zorder=2,linewidths=[0.5])
+    ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=2)
+    
+    if levels is None:
+        levels = 10
+    if vmin is None:
+        vmin = np.nanmin(field) 
+    if vmax is None:
+        vmax = np.nanmax(field)
+    if bins == None: # Bins overrides vmin,vmax,levels if not None
+        bins = np.linspace(vmin, vmax, levels + 1)
+        
+    # Colourbar is discrete and ranged based on vmin and vmax
+    cmap = plt.get_cmap(cmap,levels)
+    cbar_norm = mpl.colors.BoundaryNorm(bins, cmap.N)
+
+    # Holds the field itself
+    mesh = ax.pcolormesh(lons, lats, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True)
+    cb = fig.colorbar(ScalarMappable(norm=cbar_norm, cmap=cmap),ax=ax,
+                      spacing=spacing,
+                      orientation='vertical',
+                      extend=extend,
+                      shrink=0.73)
+    cb.set_label(label=cbar_label,
+                 rotation=0)
+                 # labelpad=20)
+    cb.ax.tick_params(labelsize=labelsize)
+    
+    if extend=='both' or extend=='max':
+        cb.ax.yaxis.set_label_coords(0.5, 1.08) 
+    else:
+        cb.ax.yaxis.set_label_coords(0.5, 1.03) 
+
+    # Gridline configuration
+    gl = ax.gridlines(draw_labels=True, crs=ccrs.PlateCarree(), linewidth=0.5, color=feature_colours, linestyle='--')
+    gl.xlocator = mticker.FixedLocator(np.arange(-180, 180, 1))  # longitude ticks
+    gl.ylocator = mticker.FixedLocator(np.arange(-90, 90, 1))    # latitude ticks
+    gl.top_labels = False
+    gl.right_labels = False
+    gl.xlabel_style = {'size': 9}
+    gl.ylabel_style = {'size': 9}
+    ax.axis('off')
+    fig.tight_layout()
+
+    ax.add_artist(ScaleBar(1,box_alpha=0,color=feature_colours,location='lower right'))
+
+    plt.title(title)
+    return fig,ax,cb
+
+
+def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsize=6,features_colour='grey',features_fontsize=5,sigfigs=2,field=None):
+    """
+    Annotates a Cartopy map with station names and optional numerical field values.
+
     Parameters:
-        plt : matplotlib.pyplot
-    
-    Returns: 
-        ax : matplotlib.pyplot.subplot
-    
-    Example usage:
-        ax = add_map_features(plt)
-    """
-    ax = plt.subplot(projection=rotated_pole)
-    ax.add_feature(cfeature.BORDERS,edgecolor='grey')
-    ax.add_feature(cfeature.LAKES, edgecolor='grey', facecolor='none')
-    ax.add_feature(cfeature.RIVERS, edgecolor='grey', facecolor='none')
-    ax.add_feature(cfeature.COASTLINE,edgecolor='grey')
-    return ax
+    -----------
+    fig : matplotlib.figure.Figure
+        The figure object containing the map.
+    ax : matplotlib.axes._subplots.AxesSubplot
+        The axes object with a Cartopy map projection.
+    stations : xarray.Dataset
+        A dataset containing station metadata, with required coordinates:
+        - stations.lon : array-like, station longitudes
+        - stations.lat : array-like, station latitudes
+        - stations.station_name : array-like, station name strings
+    field : array-like or None, optional
+        Optional numeric values to annotate below each station marker.
+        If None, no field values are shown.
+    field_fontcolour : str, optional
+        Colour used for the numeric field text (default: 'black').
+    field_fontsize : int, optional
+        Font size for the field value annotations (default: 6).
+    features_colour : str, optional
+        Colour used for the station name labels (default: 'grey').
+    features_fontsize : int, optional
+        Font size for station name labels (default: 5).
+    sigfigs : int, optional
+        Number of significant figures for the field values (default: 2).
 
+    Returns:
+    --------
+    fig : matplotlib.figure.Figure
+        The input figure, with station annotations added.
+    ax : matplotlib.axes._subplots.AxesSubplot
+        The input axes, with text labels added.
+
+    Notes:
+    ------
+    - Station names are positioned slightly above each marker, with a longitude offset applied 
+      to prevent text overflow near the eastern edge of the map.
+    - Field values are shown slightly below each station marker if provided.
+    """
+    
+    if field is None:
+        field = [None for i in range(len(stations))]
+    for lon, lat, name,field_value in zip(stations.lon.values, stations.lat.values, stations.station_name.values, field):
+
+        if field_value is not None:
+            # Label the stations on the map with the field value
+            label = f'{round(field_value*10**sigfigs)/(10**sigfigs)}'
+            ax.text(lon, lat-0.02, label, transform=ccrs.PlateCarree(),
+                    ha='center', va='top', fontsize=field_fontsize,color=field_fontcolour)
+    
+        # Display the name of the station wihout allowing the Eastmost edge to have words spilling out
+        offset=0
+        if lon>-72:
+            offset=0.10 
+        label = name
+        ax.text(lon-offset, lat+0.01, label, transform=ccrs.PlateCarree(),
+                ha='center', va='bottom', fontsize=features_fontsize,color=features_colour)
+    
+    return fig,ax
 
 """
 Section 3. Chunking and file conversion tools
@@ -702,13 +902,23 @@ Section 3. Chunking and file conversion tools
 stand_chunk = {'time': 91, 'rlat': 280, 'rlon': 280}
 def standard_rechunk(ds,verbose=False,standard_chunk=stand_chunk):
     """
-    Chunks dataset for zarr saving compatibility (consistent chunks until final)
+    Chunks an xarray Dataset or DataArray for Zarr compatibility.
     
-    parameters
-        ds             : xarray Dataset/array - dataset to be converted/modified by value
-        varbose        : boolean              - toggle to print detailed chunking information
-        standard_chunk : dict                 - default chunked by 280x280 spatial domain and 4-year time domain
+    Parameters
+    ----------
+    ds : xarray.Dataset or xarray.DataArray
+        The dataset to be chunked in-place for Zarr storage.
+    verbose : bool, optional
+        If True, prints detailed information about the chunking process (default: False).
+    standard_chunk : dict, optional
+        A dictionary defining the target chunk sizes (e.g., {'x': 280, 'y': 280, 'time': 48}).
+    
+    Returns
+    -------
+    ds_chunked : xarray.Dataset or xarray.DataArray
+        A version of the input dataset with adjusted chunking.
     """
+
     ds.encoding = {
         'scale_factor': 1.0,
         'add_offset': 0.,
@@ -737,23 +947,40 @@ def standard_rechunk(ds,verbose=False,standard_chunk=stand_chunk):
 
 def save_zarr(ds,canopy=None,store=None,mode='w-',region=None,append_dim='time'):
     """
-    Attempts to save dask-compatible DataArray in zarr format
+    Attempts to save a Dask-backed xarray DataArray in Zarr format.
     
-    Parameters:
-        
-        ds    : xarray DataArray 
-            - data to be saved in zarr format
-            
-        store : MutableMapping, str or path-like, optional 
-            – Store or path to directory in local or remote file system
-            
-        canopy : string
-            - If store not specified, uses default directory based on canopy type, 'C' for CLASS or 'T' for CLASS+TEB
-        
-        mode  : string
-            - 'w', 'w-', 'a', 'a-', 'r+', None 
-            - Default 'w-' write, fail if exists
+    Parameters
+    ----------
+    ds : xarray.DataArray
+        The data to be saved in Zarr format.
+    
+    store : str, path-like, or MutableMapping, optional
+        Target location for the Zarr store. Can be a directory path (local or remote) or a Zarr-compatible storage object.
+        If not provided, a default path will be inferred based on the `canopy` argument.
+    
+    canopy : str
+        If `store` is not specified, determines the default directory based on canopy type:
+        - 'C' for CLASS
+        - 'T' for CLASS + TEB
+    
+    mode : str, optional
+        Zarr write mode. Options:
+        - 'w'   : overwrite existing store
+        - 'w-'  : write only if store does not exist (default)
+        - 'a'   : append to existing store
+        - 'a-'  : append only if store exists
+        - 'r+'  : read/write, must exist
+    
+    Returns
+    -------
+    None
+    
+    Notes
+    -----
+    - This function is intended for use with chunked (Dask-backed) arrays.
+    - `ds` will be chunked appropriately, if not already, using standard_rechunk().
     """
+
     
     # In the event that a store location was not specified
     if store==None:
