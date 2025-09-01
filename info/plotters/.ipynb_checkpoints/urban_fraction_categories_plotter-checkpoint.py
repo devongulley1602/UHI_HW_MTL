@@ -16,7 +16,7 @@ ax.scatter(urban_stations.lon, urban_stations.lat, transform=ccrs.PlateCarree(),
 ax.scatter(subur_stations.lon, subur_stations.lat, transform=ccrs.PlateCarree(),
            color='orange', marker='s',label='suburban',s=3)
 ax.scatter(rural_stations.lon, rural_stations.lat, transform=ccrs.PlateCarree(),
-           color='yellow', marker='s',label='rural',s=3)
+           color='yellow', marker='s',label='reduced urban',s=3)
 ax.legend(title='Stations',alignment='left',framealpha=0.4)
 
 # plt.show()
