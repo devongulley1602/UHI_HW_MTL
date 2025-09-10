@@ -311,14 +311,14 @@ try :
     Using the lat/lon pairs given by the pavics stations (stations xarray dataset) within the domain: 
         1. Interpolate to the closest rlat/rlon grid point in the simulation
         2. Compare this point with the blurred urban fraction field, smoothing out stark discontinuities
-            2.1 A simple Gaussian blur with a 2-cell standard deviation
+            2.1 A simple Gaussian blur with a 1.5-cell standard deviation
         3. Classify station as urban or reduced urban (ie rural) with >=0.5 and <0.01 respectively
         4. Assign coordinate of the mask, as well as the urban fraction itself to each station set
         
     Using this method on the PAVICS dataset, on 2025-09-01, this gives:
         - 2 urban stations
-        - 25 subur stations
-        - 22 rural stations
+        - 14 suburban stations
+        - 21 rural stations
 
     This method has been generalised: 
         Any field can be appended to a station dataset simply by using 
@@ -345,7 +345,7 @@ try :
             blurred,
             dims=da.dims,
             coords=da.coords,
-            name=f'{da.name}_blurred_std{int(sigma)}'
+            name=f'{da.name}_blurred_std{str(sigma).replace('.','p')}'
         )
     urban_fraction = veg_fields.sel(lev='21').rename('urban_fraction')
     blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=2)
@@ -360,17 +360,17 @@ try :
         da : xarray.DataArray
             The gridded model field to sample from (must have 'rlat' and 'rlon' coordinates).
         stations : xarray.Dataset or DataArray, optional
-            Station dataset with a 'station' dimension. Default is global `stations`.
+            Station dataset with a 'station' dimension. Default is global stations.
         name : str, optional
-            Name to give the new coordinate. If None, uses `da.name`.
+            Name to give the new coordinate. If None, uses da.name.
         method : {"nearest", "linear"}, default "nearest"
-            Interpolation method passed to `xarray.DataArray.sel`.
+            Interpolation method passed to xarray.DataArray.sel.
     
         Returns
         -------
         stations_with_field : xarray.Dataset or DataArray
-            Copy of `stations` with a new coordinate named `name`
-            containing values of `da` interpolated at station locations.
+            Copy of stations with a new coordinate named name
+            containing values of da interpolated at station locations.
         """
         
         if name == None:
@@ -388,7 +388,7 @@ try :
             {name: ("station", np.asarray(field_at_station))}
         )
     
-    def add_blurred_field_to_stations(da,stations,name=None,method='nearest',sigma=2.0):
+    def add_blurred_field_to_stations(da,stations,name=None,method='nearest',sigma=1.5):
         """
         Sample a Gaussian-smoothed model field at station locations.
     
@@ -399,23 +399,23 @@ try :
         stations : xarray.Dataset or DataArray, optional
             Station dataset with a 'station' dimension.
         name : str, optional
-            Name to give the new coordinate. If None, uses `da.name`.
+            Name to give the new coordinate. If None, uses da.name.
         method : {"nearest", "linear"}, default "nearest"
-            Interpolation method passed to `xarray.DataArray.sel`.
-        sigma : float, default 2.0
+            Interpolation method passed to xarray.DataArray.sel.
+        sigma : float, default 1.5
             Standard deviation (in grid cells) for Gaussian smoothing
             applied before sampling.
     
         Returns
         -------
         stations_with_field : xarray.Dataset or DataArray
-            Copy of `stations` with a new coordinate named `name`
-            containing values of the blurred `da` at station locations.
+            Copy of stations with a new coordinate named name
+            containing values of the blurred da at station locations.
     
         Notes
         -----
-        - Wraps `add_field_to_stations` after applying
-          `gaussian_blur_xarray(da, sigma)`.
+        - Wraps add_field_to_stations after applying
+          gaussian_blur_xarray(da, sigma).
         - Useful for including non-local context around each station
           when sampling model fields.
         """
@@ -424,13 +424,16 @@ try :
     stations = add_field_to_stations(urban_fraction,stations=stations)
     stations = add_field_to_stations(lake_fraction,stations=stations)
 
-    stations = add_blurred_field_to_stations(urban_fraction,stations=stations)
-    stations = add_blurred_field_to_stations(lake_fraction,stations=stations)
+    # 1.5 stdev blurring
+    stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=stations)
+    stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=stations)
 
-    urban_stations = stations.where(stations.urban_fraction_blurred_std2>0.5,drop=True)
-    rural_stations = stations.where(stations.urban_fraction_blurred_std2<0.01,drop=True)
-    subur_stations = stations.where(stations.urban_fraction_blurred_std2<=0.5,drop=True).where(stations.urban_fraction_blurred_std2>=0.01,drop=True)
-
+    # Classify stations based on blurred urban fraction and blurred lake fraction
+    dry_stations = stations.where(stations.lake_fraction_blurred_std1p5 < 0.10,drop=True)
+    
+    urban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
+    suburban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
+    rural_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
 
     
 except OSError:
@@ -857,7 +860,7 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
     
     Notes
     -----
-    - If `bins` is not provided, they can be inferred using `vmin`, `vmax`, and number of levels.
+    - If bins is not provided, they can be inferred using vmin, vmax, and number of levels.
     - Designed for use with CLASS lake features compatible with Cartopy projections.
     """
 
@@ -1049,10 +1052,10 @@ def save_zarr(ds,canopy=None,store=None,mode='w-',region=None,append_dim='time')
     
     store : str, path-like, or MutableMapping, optional
         Target location for the Zarr store. Can be a directory path (local or remote) or a Zarr-compatible storage object.
-        If not provided, a default path will be inferred based on the `canopy` argument.
+        If not provided, a default path will be inferred based on the canopy argument.
     
     canopy : str
-        If `store` is not specified, determines the default directory based on canopy type:
+        If store is not specified, determines the default directory based on canopy type:
         - 'C' for CLASS
         - 'T' for CLASS + TEB
     
@@ -1071,7 +1074,7 @@ def save_zarr(ds,canopy=None,store=None,mode='w-',region=None,append_dim='time')
     Notes
     -----
     - This function is intended for use with chunked (Dask-backed) arrays.
-    - `ds` will be chunked appropriately, if not already, using standard_rechunk().
+    - ds will be chunked appropriately, if not already, using standard_rechunk().
     """
 
     
