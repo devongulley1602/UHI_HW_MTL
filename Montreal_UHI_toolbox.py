@@ -374,7 +374,7 @@ try :
         """
         
         if name == None:
-            name = da.name
+            name = da.name.replace(' ','_').replace(',','').replace('/','or').replace('.','')
             
         field_at_station = da.sel(
             rlat=xr.DataArray(station_rlat, dims='points'),
@@ -385,7 +385,7 @@ try :
         #     field_at_station=("station", np.asarray(field_at_station))
         # ).rename(field_at_station=name)
         return stations.assign_coords(
-            {name: ("station", np.asarray(field_at_station))}
+            {name: ('station', np.asarray(field_at_station))}
         )
     
     def add_blurred_field_to_stations(da,stations,name=None,method='nearest',sigma=1.5):
@@ -421,8 +421,8 @@ try :
         """
         return add_field_to_stations(gaussian_blur_xarray(da,sigma=sigma),stations,name=name,method=method)
 
-    stations = add_field_to_stations(urban_fraction,stations=stations)
-    stations = add_field_to_stations(lake_fraction,stations=stations)
+    # stations = add_field_to_stations(urban_fraction,stations=stations)
+    # stations = add_field_to_stations(lake_fraction,stations=stations)
 
     # 1.5 stdev blurring
     stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=stations)
