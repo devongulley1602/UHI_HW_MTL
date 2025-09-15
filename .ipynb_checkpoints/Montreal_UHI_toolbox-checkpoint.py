@@ -86,6 +86,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from matplotlib_scalebar.scalebar import ScaleBar
+from matplotlib import rcParams
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import pandas as pd
@@ -100,6 +101,7 @@ import re
 import io
 import base64
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import cmocean
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.collections import PatchCollection
@@ -108,6 +110,12 @@ from matplotlib.colors import Normalize, BoundaryNorm
 from mpl_toolkits.basemap import Basemap
 import geopandas as gpd
 import xarray as xr
+from scipy.ndimage import gaussian_filter
+
+# Set matplotlib
+rcParams['font.family'] = 'sans-serif'
+rcParams['font.sans-serif'] = ['Open Sans']
+
 """
 Section 1. Static and dynamic geospatial fields
 """
@@ -118,8 +126,7 @@ intermediates_dir = '/runoff/gulley/St_Laurent/intermediates'
 rotated_pole = ccrs.RotatedPole(pole_longitude=106.425, pole_latitude=44.5)
 
 field_keys = ['tas','tasmax','tasmin','hrss','hfss','hfls']
-veg_fields = xr.open_mfdataset('/runoff/gulley/St_Laurent/StLaurent_1km_SL2.5_ERA5_advHU/Fix_Fields/StLaurent_1km_SL2.5_ERA5_advHU_step0.nc')['furban']#.assign_attrs({'long_name':'Static Fields', 'standard_name':'static_fields'})
-
+veg_fields = xr.open_mfdataset('/runoff/gulley/St_Laurent/StLaurent_1km_SL2.5_ERA5_advHU/Fix_Fields/StLaurent_1km_SL2.5_ERA5_advHU_step0.nc')['furban'].assign_attrs({'long_name':'Vegetation Fields','standard_name':'veg_fields'}).rename('veg_fields')
 
 # Populate the dictionary holding fixed fields from the {experiment_name - TEB or CLASS+TEB}/Fix_Fields
 static_fields_C = {}
@@ -169,8 +176,11 @@ veg_levs = { '1':'salt water, ocean',
                 '24':'desert / bare soil',
                 '25':'mixed wood forests',
                 '26':'mixed shrubs'}
-is_rural = veg_fields.sel(lev=21) < 0.01 # Based on metric used by Roberge and Sushama (2018)
-is_urban = veg_fields.sel(lev=21) > 0.5
+
+# Based on metric used by Michau et al. (2023) with nonzero water fractions below 5%
+no_lakes =  veg_fields.sel(lev=3)  < 0.05
+is_rural = (veg_fields.sel(lev=21) < 0.01).where(no_lakes)
+is_urban = (veg_fields.sel(lev=21) > 0.50).where(no_lakes)
 class_fields = []
 for num_key in veg_levs.keys():
     # Format:
@@ -210,7 +220,7 @@ TEB_fieldnames = ['natural_frac',
 TEB_geophys = [] # Stores the static driving fields for TEB
 for field in TEB_fieldnames:
     TEB_geophys.append(static_fields_T['geophys'][field])
-
+field = None
 
 def get_outputs(field,extension='.zarr',canopy='both'):
     """
@@ -300,47 +310,130 @@ try :
     """
     Using the lat/lon pairs given by the pavics stations (stations xarray dataset) within the domain: 
         1. Interpolate to the closest rlat/rlon grid point in the simulation
-        2. Compare this point with the urban fraction field
+        2. Compare this point with the blurred urban fraction field, smoothing out stark discontinuities
+            2.1 A simple Gaussian blur with a 1.5-cell standard deviation
         3. Classify station as urban or reduced urban (ie rural) with >=0.5 and <0.01 respectively
         4. Assign coordinate of the mask, as well as the urban fraction itself to each station set
         
-    Using this method on the PAVICS dataset, on 2025-07-30, this gives:
-        - 5 urban stations
-        - 16 suburban stations
-        - 28 reduced-urban stations       
-        
+    Using this method on the PAVICS dataset, on 2025-09-01, this gives:
+        - 2 urban stations
+        - 14 suburban stations
+        - 21 rural stations
+
+    This method has been generalised: 
+        Any field can be appended to a station dataset simply by using 
+        add_field_to_stations or add_blurred_field_to_stations 
     """
     station_rotated_points = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
     station_rlon = station_rotated_points[:, 0]
     station_rlat = station_rotated_points[:, 1]
-    
-    urban_station_mask = is_urban.sel(
-        rlat=xr.DataArray(station_rlat, dims="points"),
-        rlon=xr.DataArray(station_rlon, dims="points"),
-        method='nearest'
-    ).values
-    
-    rural_station_mask =  is_rural.sel(
-        rlat=xr.DataArray(station_rlat, dims="points"),
-        rlon=xr.DataArray(station_rlon, dims="points"),
-        method='nearest'
-    ).values
 
-    urban_fraction = veg_fields.sel(lev=21)
-    station_urban_fraction = urban_fraction.sel(
-        rlat=xr.DataArray(station_rlat, dims="points"),
-        rlon=xr.DataArray(station_rlon, dims="points"),
-        method='nearest'
-    ).values
-
-    stations = stations.assign_coords(is_urban=('station',urban_station_mask),
-                                      is_rural=('station',rural_station_mask),
-                                      urban_fraction=('station',station_urban_fraction))
+    def gaussian_blur_xarray(da,sigma=1.0):
+        """
+        Parameters: 
+            da - xarray.DataArray of a particular field
+            sigma - float standard deviation
     
-    urban_stations = stations.where(stations.is_urban, drop=True)
-    rural_stations = stations.where(stations.is_rural, drop=True)
-    subur_stations = stations.where(stations.is_rural==stations.is_urban, drop=True)
+        Returns: 
+            xarray.DataArray - Gaussian blur of da 
+        
+        Smoothing filter that replaces each value with a Gaussian-weighted average of its (original da)
+        neighbouring cells. Full width half max of the blurring weight is sqrt(2 ln2)*sigma in # of cells.
+        """
+        blurred = gaussian_filter(da.values, sigma=sigma, mode='nearest')
+        return xr.DataArray(
+            blurred,
+            dims=da.dims,
+            coords=da.coords,
+            name=f'{da.name}_blurred_std{str(sigma).replace('.','p')}'
+        )
+    urban_fraction = veg_fields.sel(lev='21').rename('urban_fraction')
+    blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=2)
+    lake_fraction = veg_fields.sel(lev='3').rename('lake_fraction')
+    
+    def add_field_to_stations(da,stations=stations,name=None,method='nearest'):
+        """
+        Sample a model field at station locations and attach it as a coordinate.
+    
+        Parameters
+        ----------
+        da : xarray.DataArray
+            The gridded model field to sample from (must have 'rlat' and 'rlon' coordinates).
+        stations : xarray.Dataset or DataArray, optional
+            Station dataset with a 'station' dimension. Default is global stations.
+        name : str, optional
+            Name to give the new coordinate. If None, uses da.name.
+        method : {"nearest", "linear"}, default "nearest"
+            Interpolation method passed to xarray.DataArray.sel.
+    
+        Returns
+        -------
+        stations_with_field : xarray.Dataset or DataArray
+            Copy of stations with a new coordinate named name
+            containing values of da interpolated at station locations.
+        """
+        
+        if name == None:
+            name = da.name.replace(' ','_').replace(',','').replace('/','or').replace('.','')
+            
+        field_at_station = da.sel(
+            rlat=xr.DataArray(station_rlat, dims='points'),
+            rlon=xr.DataArray(station_rlon, dims='points'),
+            method=method
+        ).values
+        # return stations.assign_coords(
+        #     field_at_station=("station", np.asarray(field_at_station))
+        # ).rename(field_at_station=name)
+        return stations.assign_coords(
+            {name: ('station', np.asarray(field_at_station))}
+        )
+    
+    def add_blurred_field_to_stations(da,stations,name=None,method='nearest',sigma=1.5):
+        """
+        Sample a Gaussian-smoothed model field at station locations.
+    
+        Parameters
+        ----------
+        da : xarray.DataArray
+            The gridded model field to sample from.
+        stations : xarray.Dataset or DataArray, optional
+            Station dataset with a 'station' dimension.
+        name : str, optional
+            Name to give the new coordinate. If None, uses da.name.
+        method : {"nearest", "linear"}, default "nearest"
+            Interpolation method passed to xarray.DataArray.sel.
+        sigma : float, default 1.5
+            Standard deviation (in grid cells) for Gaussian smoothing
+            applied before sampling.
+    
+        Returns
+        -------
+        stations_with_field : xarray.Dataset or DataArray
+            Copy of stations with a new coordinate named name
+            containing values of the blurred da at station locations.
+    
+        Notes
+        -----
+        - Wraps add_field_to_stations after applying
+          gaussian_blur_xarray(da, sigma).
+        - Useful for including non-local context around each station
+          when sampling model fields.
+        """
+        return add_field_to_stations(gaussian_blur_xarray(da,sigma=sigma),stations,name=name,method=method)
 
+    # stations = add_field_to_stations(urban_fraction,stations=stations)
+    # stations = add_field_to_stations(lake_fraction,stations=stations)
+
+    # 1.5 stdev blurring
+    stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=stations)
+    stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=stations)
+
+    # Classify stations based on blurred urban fraction and blurred lake fraction
+    dry_stations = stations.where(stations.lake_fraction_blurred_std1p5 < 0.10,drop=True)
+    
+    urban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
+    suburban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
+    rural_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
 
     
 except OSError:
@@ -767,7 +860,7 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
     
     Notes
     -----
-    - If `bins` is not provided, they can be inferred using `vmin`, `vmax`, and number of levels.
+    - If bins is not provided, they can be inferred using vmin, vmax, and number of levels.
     - Designed for use with CLASS lake features compatible with Cartopy projections.
     """
 
@@ -877,7 +970,10 @@ def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsi
     """
     
     if field is None:
-        field = [None for i in range(len(stations))]
+        field = [None for i in range(len(stations.station_name))]
+    else: 
+        field = field.sel(rlat=xr.DataArray(station_rlat, dims='points'),rlon=xr.DataArray(station_rlon, dims='points'),method='nearest').values
+        
     for lon, lat, name,field_value in zip(stations.lon.values, stations.lat.values, stations.station_name.values, field):
 
         if field_value is not None:
@@ -956,10 +1052,10 @@ def save_zarr(ds,canopy=None,store=None,mode='w-',region=None,append_dim='time')
     
     store : str, path-like, or MutableMapping, optional
         Target location for the Zarr store. Can be a directory path (local or remote) or a Zarr-compatible storage object.
-        If not provided, a default path will be inferred based on the `canopy` argument.
+        If not provided, a default path will be inferred based on the canopy argument.
     
     canopy : str
-        If `store` is not specified, determines the default directory based on canopy type:
+        If store is not specified, determines the default directory based on canopy type:
         - 'C' for CLASS
         - 'T' for CLASS + TEB
     
@@ -978,7 +1074,7 @@ def save_zarr(ds,canopy=None,store=None,mode='w-',region=None,append_dim='time')
     Notes
     -----
     - This function is intended for use with chunked (Dask-backed) arrays.
-    - `ds` will be chunked appropriately, if not already, using standard_rechunk().
+    - ds will be chunked appropriately, if not already, using standard_rechunk().
     """
 
     

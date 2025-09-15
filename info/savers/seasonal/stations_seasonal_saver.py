@@ -3,7 +3,7 @@ stations_seasonal_saver.py
 
 Selects PAVICS 3rd gen homogenised station temperature data within the 2000-2022 (inclusive) simulated period.
 Saves as zarr - example to open: 
-    tasmax_avg = xr.open_zarr('/home/gulley/UHI_HW_MTL/info/station/seasons_avg_tasmax.zarr')
+    tasmax_avg = xr.open_zarr('/runoff/gulley/St_Laurent/intermediates/station/seasons_avg_tasmax.zarr')
 """
 from Montreal_UHI_toolbox import stations
 path = '/runoff/gulley/St_Laurent/intermediates/station'
