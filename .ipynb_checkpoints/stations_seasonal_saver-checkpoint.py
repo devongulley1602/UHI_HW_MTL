@@ -8,7 +8,7 @@ Saves as zarr - example to open:
 from Montreal_UHI_toolbox import stations
 path = '/runoff/gulley/St_Laurent/intermediates/station'
 
-for field in ['tasmin']:#['tasmax','tasmin','tas']:
+for field in ['tasmax','tasmin','tas']:
     data = stations.sel(time=slice('2000','2022'))['tasmax']
     data_avg = data.groupby('time.season').mean(dim='time')
     data_std = data.groupby('time.season').std(dim='time')

@@ -328,7 +328,7 @@ try :
     station_rlon = station_rotated_points[:, 0]
     station_rlat = station_rotated_points[:, 1]
 
-    def gaussian_blur_xarray(da,sigma=1.0):
+    def gaussian_blur_xarray(da,sigma=1.5):
         """
         Parameters: 
             da - xarray.DataArray of a particular field
@@ -348,7 +348,7 @@ try :
             name=f'{da.name}_blurred_std{str(sigma).replace('.','p')}'
         )
     urban_fraction = veg_fields.sel(lev='21').rename('urban_fraction')
-    blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=2)
+    blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=1.5)
     lake_fraction = veg_fields.sel(lev='3').rename('lake_fraction')
     
     def add_field_to_stations(da,stations=stations,name=None,method='nearest'):
@@ -926,7 +926,7 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
     return fig,ax,cb
 
 
-def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsize=6,features_colour='grey',features_fontsize=5,sigfigs=2,field=None):
+def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsize=6,features_colour='grey',features_fontsize=5,sigfigs=2,field=None,linear_field=None,units=''):
     """
     Annotates a Cartopy map with station names and optional numerical field values.
 
@@ -943,7 +943,7 @@ def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsi
         - stations.station_name : array-like, station name strings
     field : array-like or None, optional
         Optional numeric values to annotate below each station marker.
-        If None, no field values are shown.
+        If None, no field values are shown, or linear_field values are shown.
     field_fontcolour : str, optional
         Colour used for the numeric field text (default: 'black').
     field_fontsize : int, optional
@@ -968,26 +968,41 @@ def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsi
       to prevent text overflow near the eastern edge of the map.
     - Field values are shown slightly below each station marker if provided.
     """
-    
+    station_rotated_points = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
+    station_rlon = station_rotated_points[:, 0]
+    station_rlat = station_rotated_points[:, 1]
+
     if field is None:
         field = [None for i in range(len(stations.station_name))]
-    else: 
+    else:
         field = field.sel(rlat=xr.DataArray(station_rlat, dims='points'),rlon=xr.DataArray(station_rlon, dims='points'),method='nearest').values
         
+    # A linear_field is just one that is simply tied to the stations, a field is tied to the grid
+    if linear_field is not None:
+        field = linear_field
+    
     for lon, lat, name,field_value in zip(stations.lon.values, stations.lat.values, stations.station_name.values, field):
 
         if field_value is not None:
-            # Label the stations on the map with the field value
-            label = f'{round(field_value*10**sigfigs)/(10**sigfigs)}'
+            label = ''
+            if type(field_value) != str:
+                # Label the stations on the map with the field value
+                label = f'{round(field_value*10**sigfigs)/(10**sigfigs)}{units}'
+            else:
+                label = field_value
+                
             ax.text(lon, lat-0.02, label, transform=ccrs.PlateCarree(),
-                    ha='center', va='top', fontsize=field_fontsize,color=field_fontcolour)
+                        ha='center', va='top', fontsize=field_fontsize,color=field_fontcolour)
     
-        # Display the name of the station wihout allowing the Eastmost edge to have words spilling out
-        offset=0
+        # Display the name of the station wihout allowing the Eastmost/Northmost edge to have words spilling out
+        x_offset=0
         if lon>-72:
-            offset=0.10 
+            x_offset=0.10
+        y_offset=0
+        if lat>46.70:
+            y_offset=0.01
         label = name
-        ax.text(lon-offset, lat+0.01, label, transform=ccrs.PlateCarree(),
+        ax.text(lon-x_offset, lat+0.01-y_offset, label, transform=ccrs.PlateCarree(),
                 ha='center', va='bottom', fontsize=features_fontsize,color=features_colour)
     
     return fig,ax
