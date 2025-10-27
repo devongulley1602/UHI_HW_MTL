@@ -438,6 +438,7 @@ try :
     
 except OSError:
     print('Error loading PAVICS')
+    stations = []
 
 def pad_list(lst, min_length, default_value=None):
     """Ensure lst has at least min_length items by appending default_value."""
