@@ -298,10 +298,16 @@ try :
     
     # Set the stations into a pandas dataframe
     stations = pavics.sel(station=station_is_in_domain).set_coords(['lat', 'lon', 'station_name'])
+
+    # In case the user wants to exclude stations, data availability is limited for the following
+    stations_to_exclude = ['POINTE AU CHENE', 'NAMINIGUE', 'HUBERDEAU','VALLEYFIELD','STE MADELEINE','SAINT-GERMAIN-DE-GRANTHAM','ST GUILLAUME','MACDONALD COLLEGE','DRUMMONDVILLE','BROME','ST TITE','ST COME','BERTHIERVILLE','MORRISBURG']
+    filtered_stations = stations.where(~stations.station_name.isin(stations_to_exclude), drop=True)
+
+
     # To project station data onto the map
     gdf = pd.read_pickle('/runoff/gulley/misc/polygons_gdf.pkl')
     patches = [MplPolygon(np.array(poly.exterior.coords), closed=True) for poly in gdf.geometry]
-    
+
     station_locations = stations[['lat', 'lon', 'station_name']].to_dataframe().reset_index()
     geojson_stations = gpd.GeoDataFrame(
         station_locations, geometry=gpd.points_from_xy(station_locations['lon'], station_locations['lat'])
