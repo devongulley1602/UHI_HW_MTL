@@ -177,7 +177,7 @@ veg_levs = { '1':'salt water, ocean',
                 '25':'mixed wood forests',
                 '26':'mixed shrubs'}
 
-# Based on metric used by Michau et al. (2023) with nonzero water fractions below 5%
+# Based on metric used by Michau et al. (2023) except with nonzero water fractions below 5% instead of 10%
 no_lakes =  veg_fields.sel(lev=3)  < 0.05
 is_rural = (veg_fields.sel(lev=21) < 0.01).where(no_lakes)
 is_urban = (veg_fields.sel(lev=21) > 0.50).where(no_lakes)
@@ -302,6 +302,34 @@ try :
     # In case the user wants to exclude stations, data availability is limited for the following
     stations_to_exclude = ['POINTE AU CHENE', 'NAMINIGUE', 'HUBERDEAU','VALLEYFIELD','STE MADELEINE','SAINT-GERMAIN-DE-GRANTHAM','ST GUILLAUME','MACDONALD COLLEGE','DRUMMONDVILLE','BROME','ST TITE','ST COME','BERTHIERVILLE','MORRISBURG']
     filtered_stations = stations.where(~stations.station_name.isin(stations_to_exclude), drop=True)
+    
+    # Bounding subregion for filtered stations nearest Montreal
+    bounds_MTL = [45,46,-74.58,-72.58]
+    def station_is_near_montreal(station):
+        is_near = (
+            (station.lat >= bounds_MTL[0]) & 
+            (station.lat <= bounds_MTL[1]) & 
+            (station.lon >= bounds_MTL[2]) & 
+            (station.lon <= bounds_MTL[3])
+        )
+        return is_near
+    
+    # Returns a field only where it's nearest Montreal basedon on the bounds_MTL
+    def bounded_field(field,bounding_box=bounds_MTL):
+        """
+        bounding_box in format [min_lat N,max_lat N,max_lon E,min_lon E]
+        """
+        thresh = 0.01
+        bounding_mask = [(field.lat>=bounding_box[0]).compute(),
+                         (field.lat<=bounding_box[1]).compute(),
+                         (field.lon>=bounding_box[2]).compute(),
+                         (field.lon<=bounding_box[3]).compute()]
+        return field.where(bounding_mask[0],drop=True).where(bounding_mask[1],drop=True).where(bounding_mask[2],drop=True).where(bounding_mask[3],drop=True)
+
+    stations_mtl = filtered_stations.sel(station=station_is_near_montreal(filtered_stations)).set_coords(['lat', 'lon', 'station_name'])
+
+    
+
 
 
     # To project station data onto the map
@@ -378,13 +406,16 @@ try :
             Copy of stations with a new coordinate named name
             containing values of da interpolated at station locations.
         """
-        
+        station_rotated_points_local = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
+        station_rlon_local = station_rotated_points_local[:, 0]
+        station_rlat_local = station_rotated_points_local[:, 1]
+
         if name == None:
             name = da.name.replace(' ','_').replace(',','').replace('/','or').replace('.','')
             
         field_at_station = da.sel(
-            rlat=xr.DataArray(station_rlat, dims='points'),
-            rlon=xr.DataArray(station_rlon, dims='points'),
+            rlat=xr.DataArray(station_rlat_local, dims='points'),
+            rlon=xr.DataArray(station_rlon_local, dims='points'),
             method=method
         ).values
         # return stations.assign_coords(
@@ -433,14 +464,46 @@ try :
     # 1.5 stdev blurring
     stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=stations)
     stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=stations)
+    filtered_stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=filtered_stations) 
+    filtered_stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=filtered_stations)
 
     # Classify stations based on blurred urban fraction and blurred lake fraction
-    dry_stations = stations.where(stations.lake_fraction_blurred_std1p5 < 0.10,drop=True)
+    lake_fraction_threshold = 0.2
+    dry_stations = stations.where(stations.lake_fraction_blurred_std1p5 < lake_fraction_threshold,drop=True)
     
     urban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
     suburban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
     rural_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
 
+    # Filtered stations eliminate weak data availability
+    dry_filtered_stations = filtered_stations.where(filtered_stations.lake_fraction_blurred_std1p5 < lake_fraction_threshold,drop=True)
+    urban_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
+    suburban_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
+    rural_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
+
+
+    # All mtl stations are already filtered for data availability, ensuring that station is near Montreal
+    dry_stations_mtl = dry_filtered_stations.sel(station=station_is_near_montreal(dry_filtered_stations)).set_coords(['lat', 'lon', 'station_name'])
+    urban_stations_mtl = dry_stations_mtl.where(dry_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
+    suburban_stations_mtl = dry_stations_mtl.where(dry_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations_mtl.urban_fraction_blurred_std1p5 >0.01,drop=True)
+    rural_stations_mtl = dry_stations_mtl.where(dry_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
+    
+    # Filter high/low elevation outliers from mtl stations
+    mean_elev = np.mean(urban_stations_mtl.elev)
+    std_elev = np.std(urban_stations_mtl.elev)
+
+    # Stations outside of two standard deviation from the mean urban elevation are not used to analyse the UHI
+    lower_elev = mean_elev - std_elev*2 
+    upper_elev = mean_elev + std_elev*2
+    # # Alternatively, and functionally equivalent:
+    # lower_elev = 0 
+    # upper_elev = 100
+
+    # obs includes all station data used for analysis
+    obs = dry_stations_mtl.where(dry_stations_mtl.elev >= lower_elev,drop=True).where(dry_stations_mtl.elev <= upper_elev,drop=True)
+    obs_urban = urban_stations_mtl.where(urban_stations_mtl.elev >= lower_elev,drop=True).where(urban_stations_mtl.elev <= upper_elev,drop=True)
+    obs_suburban = suburban_stations_mtl.where(suburban_stations_mtl.elev >= lower_elev,drop=True).where(suburban_stations_mtl.elev <= upper_elev,drop=True)
+    obs_rural = rural_stations_mtl.where(rural_stations_mtl.elev >= lower_elev,drop=True).where(rural_stations_mtl.elev <= upper_elev,drop=True)
     
 except OSError:
     print('Error loading PAVICS')
@@ -827,7 +890,7 @@ def draw_map_layers(fields=[],cmap_name_array=[],vmins=[],vmaxs=[],num_level_arr
     m.get_root().add_child(ColorbarToggleScript(field_names))
     return m
 
-def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6):
+def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6,bounding_region=None, MTL_focus=False):
     """
     Plots a 2D xarray DataArray field over a map with a discrete colorbar and regional political and lake features.
     
@@ -878,10 +941,21 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
         # proj = ccrs.Orthographic(central_longitude=centre_lon, central_latitude=centre_lat)
     
     fig, ax = plt.subplots(figsize=(10,10),subplot_kw={'projection': proj})
-    
-    # Add features from smoothed CLASS contours
-    # This was selected arbitrarily until a map emerged that was regionally recognisable
-    lake_features = ax.contour(lons,lats,veg_fields.sel(lev='3'),transform=ccrs.PlateCarree(),
+
+
+    lakefield = veg_fields.sel(lev='3') # For drawing identifiable contours on the map selected for readability
+    # When using a subdomain, ensure both fields are constrained to it
+    if bounding_region != None: 
+        field = bounded_field(field,bounding_region)
+        lakefield = bounded_field(veg_fields.sel(lev='3'),bounding_region)
+
+    # A shorthand to constrain output to the Montreal subdomain
+    if MTL_focus:
+        field = bounded_field(field)
+        lakefield = bounded_field(veg_fields.sel(lev='3'))
+
+    # Add features from smoothed CLASS lake field contours
+    lake_features = ax.contour(field.lon.values,field.lat.values,lakefield,transform=ccrs.PlateCarree(),
                                levels=[0.2,1.0],#np.linspace(0.2,1.0,1),
                                colors=feature_colours,zorder=2,linewidths=[0.5])
     ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=2)
@@ -900,7 +974,7 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
     cbar_norm = mpl.colors.BoundaryNorm(bins, cmap.N)
 
     # Holds the field itself
-    mesh = ax.pcolormesh(lons, lats, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True)
+    mesh = ax.pcolormesh(field.lon.values, field.lat.values, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True)
     cb = fig.colorbar(ScalarMappable(norm=cbar_norm, cmap=cmap),ax=ax,
                       spacing=spacing,
                       orientation='vertical',
