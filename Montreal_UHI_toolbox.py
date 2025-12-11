@@ -385,7 +385,7 @@ try :
     blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=1.5)
     lake_fraction = veg_fields.sel(lev='3').rename('lake_fraction')
     
-    def add_field_to_stations(da,stations=stations,name=None,method='nearest'):
+    def add_field_to_stations(da,station_set=stations,name=None,method='nearest'):
         """
         Sample a model field at station locations and attach it as a coordinate.
     
@@ -406,7 +406,7 @@ try :
             Copy of stations with a new coordinate named name
             containing values of da interpolated at station locations.
         """
-        station_rotated_points_local = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
+        station_rotated_points_local = rotated_pole.transform_points(ccrs.PlateCarree(), station_set['lon'].values, station_set['lat'].values)
         station_rlon_local = station_rotated_points_local[:, 0]
         station_rlat_local = station_rotated_points_local[:, 1]
 
@@ -421,11 +421,11 @@ try :
         # return stations.assign_coords(
         #     field_at_station=("station", np.asarray(field_at_station))
         # ).rename(field_at_station=name)
-        return stations.assign_coords(
+        return station_set.assign_coords(
             {name: ('station', np.asarray(field_at_station))}
         )
     
-    def add_blurred_field_to_stations(da,stations,name=None,method='nearest',sigma=1.5):
+    def add_blurred_field_to_stations(da,station_set,name=None,method='nearest',sigma=1.5):
         """
         Sample a Gaussian-smoothed model field at station locations.
     
@@ -456,20 +456,26 @@ try :
         - Useful for including non-local context around each station
           when sampling model fields.
         """
-        return add_field_to_stations(gaussian_blur_xarray(da,sigma=sigma),stations,name=name,method=method)
+        return add_field_to_stations(gaussian_blur_xarray(da,sigma=sigma),station_set,name=name,method=method)
 
-    # stations = add_field_to_stations(urban_fraction,stations=stations)
-    # stations = add_field_to_stations(lake_fraction,stations=stations)
+    # stations = add_field_to_stations(urban_fraction,station_set=stations)
+    # stations = add_field_to_stations(lake_fraction,station_set=stations)
+
+    ######################################################################################################
+    #                                                                                                    #
+    #   Creation and filtering of station set to arrive at "obs" (inluding urban, rural suburban)        #
+    #                                                                                                    #
+    ######################################################################################################
 
     # 1.5 stdev blurring
-    stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=stations)
-    stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=stations)
-    filtered_stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,stations=filtered_stations) 
-    filtered_stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,stations=filtered_stations)
+    stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,station_set=stations)
+    stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,station_set=stations)
+    filtered_stations = add_blurred_field_to_stations(urban_fraction,sigma=1.5,station_set=filtered_stations) 
+    filtered_stations = add_blurred_field_to_stations(lake_fraction,sigma=1.5,station_set=filtered_stations)
 
     # Classify stations based on blurred urban fraction and blurred lake fraction
     lake_fraction_threshold = 0.2
-    dry_stations = stations.where(stations.lake_fraction_blurred_std1p5 < lake_fraction_threshold,drop=True)
+    dry_stations = filtered_stations.where(filtered_stations.lake_fraction_blurred_std1p5 < lake_fraction_threshold,drop=True)
     
     urban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
     suburban_stations = dry_stations.where(dry_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
@@ -480,7 +486,6 @@ try :
     urban_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 > 0.5, drop=True)
     suburban_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 <= 0.5,drop=True).where(dry_stations.urban_fraction_blurred_std1p5 >0.01,drop=True)
     rural_filtered_stations = dry_stations.where(dry_filtered_stations.urban_fraction_blurred_std1p5 < 0.01,drop=True)
-
 
     # All mtl stations are already filtered for data availability, ensuring that station is near Montreal
     dry_stations_mtl = dry_filtered_stations.sel(station=station_is_near_montreal(dry_filtered_stations)).set_coords(['lat', 'lon', 'station_name'])
@@ -499,15 +504,27 @@ try :
     # lower_elev = 0 
     # upper_elev = 100
 
-    # obs includes all station data used for analysis
-    obs = dry_stations_mtl.where(dry_stations_mtl.elev >= lower_elev,drop=True).where(dry_stations_mtl.elev <= upper_elev,drop=True)
-    obs_urban = urban_stations_mtl.where(urban_stations_mtl.elev >= lower_elev,drop=True).where(urban_stations_mtl.elev <= upper_elev,drop=True)
-    obs_suburban = suburban_stations_mtl.where(suburban_stations_mtl.elev >= lower_elev,drop=True).where(suburban_stations_mtl.elev <= upper_elev,drop=True)
-    obs_rural = rural_stations_mtl.where(rural_stations_mtl.elev >= lower_elev,drop=True).where(rural_stations_mtl.elev <= upper_elev,drop=True)
+    # obs includes all station data used for analysis note that all urban, suburban, rural are already "dry"
+    full_obs = dry_stations_mtl.where(dry_stations_mtl.elev >= lower_elev,drop=True).where(dry_stations_mtl.elev <= upper_elev,drop=True)
+    full_obs_urban = urban_stations_mtl.where(urban_stations_mtl.elev >= lower_elev,drop=True).where(urban_stations_mtl.elev <= upper_elev,drop=True)
+    full_obs_suburban = suburban_stations_mtl.where(suburban_stations_mtl.elev >= lower_elev,drop=True).where(suburban_stations_mtl.elev <= upper_elev,drop=True)
+    full_obs_rural = rural_stations_mtl.where(rural_stations_mtl.elev >= lower_elev,drop=True).where(rural_stations_mtl.elev <= upper_elev,drop=True)
     
+    # restrict obs time domains to be from 2000-2022 inclusive - a lot of this could be cleaner but nobody cares
+    obs = full_obs.sel(time=slice('2000','2022')).drop_vars(['fromyear','toyear','frommonth','tomonth','pct_miss'])
+    obs_urban = full_obs_urban.sel(time=slice('2000','2022')).drop_vars(['fromyear','toyear','frommonth','tomonth','pct_miss'])
+    obs_suburban = full_obs_suburban.sel(time=slice('2000','2022')).drop_vars(['fromyear','toyear','frommonth','tomonth','pct_miss'])
+    obs_rural = full_obs_rural.sel(time=slice('2000','2022')).drop_vars(['fromyear','toyear','frommonth','tomonth','pct_miss'])
+
+    ######################################################################################################
+    #                                                                                                    #
+    #   obs finally filtered and available for station statistics near Montréal                          #
+    #                                                                                                    #
+    ######################################################################################################
+
+
 except OSError:
     print('Error loading PAVICS')
-    stations = []
 
 def pad_list(lst, min_length, default_value=None):
     """Ensure lst has at least min_length items by appending default_value."""
@@ -1007,7 +1024,7 @@ def plot_field(field,cmap='viridis',levels=None,vmin=None,vmax=None,cbar_label='
     return fig,ax,cb
 
 
-def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsize=6,features_colour='grey',features_fontsize=5,sigfigs=2,field=None,linear_field=None,units=''):
+def plot_stations(fig,ax,station_set=stations,field_fontcolour='black',field_fontsize=6,features_colour='grey',features_fontsize=5,sigfigs=2,field=None,linear_field=None,units=''):
     """
     Annotates a Cartopy map with station names and optional numerical field values.
 
@@ -1049,12 +1066,12 @@ def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsi
       to prevent text overflow near the eastern edge of the map.
     - Field values are shown slightly below each station marker if provided.
     """
-    station_rotated_points = rotated_pole.transform_points(ccrs.PlateCarree(), stations['lon'].values, stations['lat'].values)
+    station_rotated_points = rotated_pole.transform_points(ccrs.PlateCarree(), station_set['lon'].values, station_set['lat'].values)
     station_rlon = station_rotated_points[:, 0]
     station_rlat = station_rotated_points[:, 1]
 
     if field is None:
-        field = [None for i in range(len(stations.station_name))]
+        field = [None for i in range(len(station_set.station_name))]
     else:
         field = field.sel(rlat=xr.DataArray(station_rlat, dims='points'),rlon=xr.DataArray(station_rlon, dims='points'),method='nearest').values
         
@@ -1062,7 +1079,7 @@ def plot_stations(fig,ax,stations=stations,field_fontcolour='black',field_fontsi
     if linear_field is not None:
         field = linear_field
     
-    for lon, lat, name,field_value in zip(stations.lon.values, stations.lat.values, stations.station_name.values, field):
+    for lon, lat, name,field_value in zip(station_set.lon.values, station_set.lat.values, station_set.station_name.values, field):
 
         if field_value is not None:
             label = ''
