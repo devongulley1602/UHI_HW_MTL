@@ -251,21 +251,21 @@ def get_outputs(field,extension='.zarr',canopy='both'):
         path_T = f'{out_dir_T}*{field}*{extension}'
         match canopy:
             case 'both':
-                return xr.open_mfdataset(path_C)[field].sel(time=slice('2000','2023')),xr.open_mfdataset(path_T)[field].sel(time=slice('2000','2023'))
+                return xr.open_mfdataset(path_C)[field].sel(time=slice('2000','2022')),xr.open_mfdataset(path_T)[field].sel(time=slice('2000','2022'))
             case 'C':
-                return xr.open_mfdataset(path_C)[field].sel(time=slice('2000','2023'))
+                return xr.open_mfdataset(path_C)[field].sel(time=slice('2000','2022'))
             case 'T':
-                return xr.open_mfdataset(path_T)[field].sel(time=slice('2000','2023'))
+                return xr.open_mfdataset(path_T)[field].sel(time=slice('2000','2022'))
     elif '.zarr' in extension:
         path_C = f'{out_dir_C}StLaurent_1km_SL2.5_ERA5_advHU_{field}.zarr'
         path_T = f'{out_dir_T}StLaurent_1km_SL2.5_ERA5_advHU_TEB_{field}.zarr'
         match canopy:
             case 'both':
-                return xr.open_zarr(path_C)[field].sel(time=slice('2000','2023')),xr.open_zarr(path_T)[field].sel(time=slice('2000','2023'))
+                return xr.open_zarr(path_C)[field].sel(time=slice('2000','2022')),xr.open_zarr(path_T)[field].sel(time=slice('2000','2022'))
             case 'C':
-                return xr.open_zarr(path_C)[field].sel(time=slice('2000','2023'))
+                return xr.open_zarr(path_C)[field].sel(time=slice('2000','2022'))
             case 'T':
-                return xr.open_zarr(path_T)[field].sel(time=slice('2000','2023'))
+                return xr.open_zarr(path_T)[field].sel(time=slice('2000','2022'))
     else:
         print('Unsupported file type.')
         return -1
