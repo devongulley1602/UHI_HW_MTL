@@ -4,80 +4,163 @@ Montreal_UHI_toolbox.py
 Stores useful variables and functions used across many analysis scripts in the project.
 Kept here for organisational purposes.
 
+Public variables
+---------------
 
-Public variables:
+    out_dir_C : str
+        Directory of the CLASS alone model output
 
-    out_dir_C : string
-        - Directory of the CLASS alone model output 
-
-    out_dir_T : string
-            - Directory of the CLASS+TEB model output 
+    out_dir_T : str
+        Directory of the CLASS+TEB model output
 
     rotated_pole : cartopy.crs.RotatedPole
-        - Location of rotated pole
+        Location of rotated pole
         
-    rlat,rlon : numpy.ndarray
-        - Rotated pole grid values each with shape (280,)
+    rlat, rlon : ndarray
+        Rotated pole grid values each with shape (280,)
         
     field_keys : array (string)
-        - Keys of fields to analyse such as 
-        - Includes 'tas', 'tasmax', 'tasmin', 'hfss', 'hfls'
+    Keys of fields to analyse such as
+    Includes 'tas', 'tasmax', 'tasmin', 'hfss', 'hfls'
         
     veg_fields : xarray.core.dataarray.DataArray
-        - CLASS vegetation and urban fields to analyse
+    CLASS vegetation and urban fields to analyse
         
     veg_levs : array of type string
-        - Tranlsation from the arbitrary level to the names of the veg_fields
+    Translation from the arbitrary level to the names of the veg_fields
 
     class_fields : array of type xarray.core.dataarray.DataArray
-        - combined and cleaned static CLASS vegetation and urban field data
+    Combined and cleaned static CLASS vegetation and urban field data
 
     TEB_fieldnames : array of type string
-        - Names of the static driving fields for TEB
+    Names of the static driving fields for TEB
 
     TEB_geophys : xarray.core.dataarray.DataArray
-        - combined and cleaned static TEB driving data
+    Combined and cleaned static TEB driving data
 
     static_fields_C, static_fields_T : xarray.core.dataarray.DataArray
-        - Fixed fields used in CLASS and CLASS+TEB simulations respectively
+    Fixed fields used in CLASS and CLASS+TEB simulations respectively
     
     is_rural, is_urban : xarray.core.dataarray.DataArray
-        - Boolean mask for urban (>50% urban fraction) and rural (<1% urban fraction) areas
+    Boolean mask for urban (>50% urban fraction) and rural (<1% urban fraction) areas
 
     pavics : xarray.core.dataset.Dataset
-        - ECCC station data available on pavics
+    ECCC station data available on pavics
 
     stations : xarray.core.dataset.Dataset
-        - pavics subset within the simulation domain
+    pavics subset within the simulation domain
 
     urban_stations, rural_stations : xarray.core.dataset
-        - Stations within the domain masked by urban/reduced-urban fraction  
+    Stations within the domain masked by urban/reduced-urban fraction
 
     stand_chunk : Dict
-        - 91-time unit chunking applied in time and 280 standard grid units applied in space
-    
+    91-time unit chunking applied in time and 280 standard grid units applied in space
 
-Public functions:
+    centre_lat, centre_lon : float
+    Centre of the simulation domain
+
+    bounds : list
+    Bounding box of the simulation domain
+
+    extent : list
+    Extent of the simulation domain
+
+    lat_min, lat_max, lon_min, lon_max : float
+    Minimum and maximum latitude and longitude of the simulation domain
+
+    gdf : geopandas.GeoDataFrame
+    GeoDataFrame containing the simulation domain
+
+    patches : list
+    List of patches for the simulation domain
+
+    geojson_stations : geopandas.GeoDataFrame
+    GeoDataFrame containing the stations
+
+    station_rotated_points : ndarray
+    Rotated pole grid values for the stations
+
+    station_rlon, station_rlat : ndarray
+    Rotated pole grid values for the stations
+
+    station_locations : pandas.DataFrame
+    DataFrame containing the station locations
+
+    urban_fraction : xarray.core.dataarray.DataArray
+    Urban fraction field
+
+    blurred_urban_fraction : xarray.core.dataarray.DataArray
+    Blurred urban fraction field
+
+    lake_fraction : xarray.core.dataarray.DataArray
+    Lake fraction field
+
+    stations_to_exclude : list
+    List of stations to exclude
+
+    filtered_stations : xarray.core.dataset.Dataset
+    Filtered stations
+
+    bounds_MTL : list
+    Bounding box for the Montreal subregion
+
+    stations_mtl : xarray.core.dataset.Dataset
+    Stations within the Montreal subregion
+
+    mean_elev : float
+    Mean elevation of the urban stations
+
+    std_elev : float
+    Standard deviation of the elevation of the urban stations
+
+    lower_elev, upper_elev : float
+    Lower and upper elevation bounds for the stations
+
+    full_obs : xarray.core.dataset.Dataset
+    Full observation dataset
+
+    full_obs_urban : xarray.core.dataset.Dataset
+    Full urban observation dataset
+
+    full_obs_suburban : xarray.core.dataset.Dataset
+    Full suburban observation dataset
+
+    full_obs_rural : xarray.core.dataset.Dataset
+    Full rural observation dataset
+
+    obs : xarray.core.dataset.Dataset
+    Observation dataset
+
+    obs_urban : xarray.core.dataset.Dataset
+    Urban observation dataset
+
+    obs_suburban : xarray.core.dataset.Dataset
+    Suburban observation dataset
+
+    obs_rural : xarray.core.dataset.Dataset
+    Rural observation dataset
+
+Public functions
+----------------
 
     add_map_features(plt) : matplotlib.pyplot.subplot
-        - Takes a matplotlib.pyplot, adds relevant cartopy borders, lakes, rivers, and costline features.
+    Takes a matplotlib.pyplot, adds relevant cartopy borders, lakes, rivers, and coastline features.
 
     get_outputs : xarray.core.dataarray.DataArray 
-        - Returns the DataArray(s) corresponding to the CLASS alone or CLASS+TEB output respectively
+    Returns the DataArray(s) corresponding to the CLASS alone or CLASS+TEB output respectively
 
     standard_rechunk : xarray.core.dataarray.DataArray
-        - Returns the DataArray with stand_chunk applied to all variables which can accept it
+    Returns the DataArray with stand_chunk applied to all variables which can accept it
 
     draw_map : folium.folium.Map
-        - Focuses on the simulation area, draws an instantaneous field
+    Focuses on the simulation area, draws an instantaneous field
 
     draw_map_layers : folium.folium.Map
-        - Focuses on the simulation area 
-        - Draws a set of fields and includes colourbars as floating toggled by the selected field layer 
+    Focuses on the simulation area
+    Draws a set of fields and includes colorbars as floating toggled by the selected field layer
         
     save_zarr(ds) : None
-        - Takes an xarray.core.dataset.DataArray and saves to zarr
-        
+    Takes an xarray.core.dataset.DataArray and saves to zarr
 """
 from glob import glob
 import numpy as np
@@ -111,6 +194,7 @@ from mpl_toolkits.basemap import Basemap
 import geopandas as gpd
 import xarray as xr
 from scipy.ndimage import gaussian_filter
+from collections.abc import Iterable
 
 # Set matplotlib
 rcParams['font.family'] = 'sans-serif'
@@ -385,7 +469,7 @@ try :
     urban_fraction = veg_fields.sel(lev='21').rename('urban_fraction')
     blurred_urban_fraction = gaussian_blur_xarray(urban_fraction,sigma=1.5)
     lake_fraction = veg_fields.sel(lev='3').rename('lake_fraction')
-    
+
     def add_field_to_stations(da,station_set=stations,name=None,method='nearest'):
         """
         Sample a model field at station locations and attach it as a coordinate.
@@ -522,6 +606,57 @@ try :
     #   obs finally filtered and available for station statistics near Montréal                          #
     #                                                                                                    #
     ######################################################################################################
+
+    
+    Z_a = np.mean(obs_urban.elev.values) # mean elevation of the smallest dataset to which all temperatures should be adjusted
+    def adjust_temp(T_b, z_b, z_a=Z_a):
+        """
+        Adjust temperature series to a target elevation using a constant lapse rate.
+
+        Adjusts an input temperature series to a specified elevation using the dry adiabatic lapse rate (g/c_p), where g is the gravitational acceleration 
+        and c_p is the specific heat capacity of air at constant pressure.
+
+        Parameters
+        ----------
+        T_b : array-like of float
+            Recorded temperature before adjustment in Kelvin.
+        z_b : array-like of float
+            Recorded elevation before adjustment in meters.
+        z_a : float, optional
+            Elevation to which the temperature is adjusted in meters. Default is the mean elevation of the smallest dataset (Z_a).
+        Returns
+        -------
+        T_a : array-like of float
+            Adjusted temperature in Kelvin, accounting for elevation differences using the constant lapse rate (g/c_p).
+
+        Notes
+        -----
+        If adjusting based on orography, manually add 2 meters to the z_b elevation values.
+        If there is only one z_b value, the zeroth index will return the full set as the array will be doubly wrapped.
+        
+        Example
+        --------
+        # Here the 1st station should cool after moving up   to the final elevation
+        #  and the 2nd station should warm after moving down to the final elevation
+
+        >>> T_b = [[280.0, 285.0, 282.5], # Temperature series at 1st station
+        >>>        [279.0, 281.0, 286.0]] # Temperature series at 2nd station
+        >>> z_b = [0, 100]                # Elevations at 1st and 2nd station respectively
+        >>> z_a = 50.0                    # Mean elevation to adjust temperatures to
+        >>> adjust_temp(T_b, z_b, z_a)    # Follows format of T_b
+        array([[279.51262425, 284.51262425, 282.01262425],
+            [279.48737575, 281.48737575, 286.48737575]])
+        """
+        g = 9.806
+        c_p = 1006
+
+        if isinstance(T_b, Iterable):
+            elev_diff = z_b - z_a * np.ones(np.shape(z_b))
+            T_a = (g/c_p) * elev_diff.reshape(-1, 1) + T_b
+        else:
+            T_a = (g/c_p) * (z_b - z_a)
+            T_a = T_a
+        return T_a
 
 
 except OSError:
