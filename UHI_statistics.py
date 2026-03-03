@@ -28,26 +28,21 @@ All hypothesis tests are two-sided:
 - Missing/masked data are handled implicitly via xarray groupby/count logic.
 """
 
-from Montreal_UHI_toolbox import obs, obs_rural, obs_urban
+from Montreal_UHI_toolbox import obs, obs_rural, obs_urban, adjust_temp, add_blurred_field_to_stations, static_fields_C
 import xarray as xr
 import numpy as np
 from scipy import stats
 
-avail_thresh = 0.8 # 80% data availability threshold for observation data
-alpha = 0.05
+# Adjust based on elevations for actual observations, adjust based on model orography for simulated observations
+obs = add_blurred_field_to_stations(static_fields_C['orog'],obs)
+obs_rural = add_blurred_field_to_stations(static_fields_C['orog'],obs_rural)
+obs_urban = add_blurred_field_to_stations(static_fields_C['orog'],obs_urban)
 
+orog_urban = np.mean(obs_urban.orog_blurred_std1p5).values
+orog_rural = np.mean(obs_rural.orog_blurred_std1p5).values
+elev_urban = np.mean(obs_urban.elev).values
+elev_rural = np.mean(obs_rural.elev).values
 
-# Load daily point data from simobs CLASS, simobs TEB+CLASS, and obs
-UHI_daily = {}
-obsdiff_UHI_daily = {}
-tebdiff_UHI_daily = {}
-temps_daily = {}
-
-# UHI_seasonal and temps_seasonal accessed by [field = tasmin/tasmax][model = C/T][season = JJA/SON/DJF/MAM]['some trait' like UHI, values,]
-UHI_seasonal = {}
-UHI_Y = {}
-temps_seasonal = {}
-temps_Y = {}
 
 def load_daily_simobs(field,model):
     """
@@ -62,9 +57,29 @@ def load_daily_simobs(field,model):
     """
     return xr.open_dataset(f'/runoff/gulley/St_Laurent/intermediates/sim/series_at_obs_locations/{field}_{model}.nc').swap_dims({'points':'station'}).assign_coords({'station': obs.station}).sel(time=slice('2000','2022'))[field] - 273.15
 
+avail_thresh = 0.8 # 80% data availability threshold for observation data
+alpha = 0.05
+
 # Loading obs (station data) S for Station ensuring station availability is >= 80% avail_thresh for a given daily sample
 urban_S = obs_urban.where(obs_urban.count(dim='station') >= len(obs_urban.station)*avail_thresh,drop=True).mean(dim='station')
 rural_S = obs_rural.where(obs_rural.count(dim='station') >= len(obs_rural.station)*avail_thresh,drop=True).mean(dim='station')
+
+# Adjust the rural stations to match the urban station elevations (urban stations don't need to be temperature adjusted to their own elevations of course)
+rural_S['tasmax'] = rural_S.tasmax.copy(data=adjust_temp(rural_S.tasmax.values + 273.15, elev_rural)[0] - 273.15)
+rural_S['tasmin'] = rural_S.tasmin.copy(data=adjust_temp(rural_S.tasmin.values + 273.15, elev_rural)[0]- 273.15)
+rural_S['tas'] = rural_S.tas.copy(data=adjust_temp(rural_S.tas.values + 273.15 , elev_rural)[0]- 273.15)
+
+# Load daily point data from simobs CLASS, simobs TEB+CLASS, and obs
+UHI_daily = {}
+obsdiff_UHI_daily = {}
+tebdiff_UHI_daily = {}
+temps_daily = {}
+
+# UHI_seasonal and temps_seasonal accessed by [field = tasmin/tasmax][model = C/T][season = JJA/SON/DJF/MAM]['some trait' like UHI, values,]
+UHI_seasonal = {}
+UHI_Y = {}
+temps_seasonal = {}
+temps_Y = {}
 
 # Load simobs and obs into daily dictionaries
 for f in ['tasmin','tasmax','tas']:
@@ -72,22 +87,33 @@ for f in ['tasmin','tasmax','tas']:
         UHI_daily[f'{f}_S'] = (urban_S[f] - rural_S[f]).dropna(dim='time')
 
         # Load daily observed daily temperatures as well
-        temps_daily[f'{f}_S'] = obs[f]
+        # temps_daily[f'{f}_S'] = obs[f] # temperatures unadjusted for elevation
+        temps_daily[f'{f}_S'] = obs[f].copy(data=adjust_temp(obs[f].values + 273.15, obs.elev.values) - 273.15)  # temperatures adjusted for elevation
         
         # Loadng simobs (model data) C for CLASS T for TEB+CLASS
         for m in ['C','T']:
-            temps_daily[f'{f}_{m}'] = load_daily_simobs(field=f,model=m)
 
-            daily = temps_daily[f'{f}_{m}']
-            urban = daily.where(daily.station.isin(obs_urban.station),drop=True).mean(dim='station')
-            rural = daily.where(daily.station.isin(obs_rural.station),drop=True).mean(dim='station')
+            # Before elevation adjustments were made:
+            # temps_daily[f'{f}_{m}'] = load_daily_simobs(field=f,model=m)
+            # daily = temps_daily[f'{f}_{m}']
+            # urban = daily.where(daily.station.isin(obs_urban.station),drop=True).mean(dim='station')
+            # rural = daily.where(daily.station.isin(obs_rural.station),drop=True).mean(dim='station')
 
+            # Adjust temperatures based on model orog to observed urban elevation average:
+            simobs = load_daily_simobs(field=f,model=m).T # transposed to match adjust_temp function - it was reversed when saved
+            adj_simobs = (simobs.copy(data=adjust_temp(simobs.values + 273.15, obs.orog_blurred_std1p5.values + 2) - 273.15)) 
+            # Set daily temperatures based on adjusted values
+            temps_daily[f'{f}_{m}'] = adj_simobs
+            urban = adj_simobs.where(adj_simobs.station.isin(obs_urban.station),drop=True).mean(dim='station')
+            rural = adj_simobs.where(adj_simobs.station.isin(obs_rural.station),drop=True).mean(dim='station')
             # Put the UHI simobs UHI for CLASS and TEB+CLASS into the daily UHI dictionary
             UHI_daily[f'{f}_{m}'] = urban - rural
 
             # Difference of UHI in each model from observation 
             obsdiff_UHI_daily[m] = UHI_daily[f'{f}_{m}'] - UHI_daily[f'{f}_S']
         tebdiff_UHI_daily[f] =  UHI_daily[f'{f}_T'] - UHI_daily[f'{f}_C']
+
+# All temperatures are adjusted based on elevation, moved towards the elevation of the smallest dataset (observed urban elevation) based on constant lapse rate assumptions
 
 # Calculate statistics using interannual variability as a basis for defining seasonal sampling and error
 for f in ['tasmin','tasmax','tas']:
