@@ -200,6 +200,8 @@ from collections.abc import Iterable
 rcParams['font.family'] = 'sans-serif'
 rcParams['font.sans-serif'] = ['Open Sans']
 
+FONT = dict(family='DejaVu Sans',size=18,color= 'black') # For plotly fig.update_layout(font=FONT)
+
 """
 Section 1. Static and dynamic geospatial fields
 """

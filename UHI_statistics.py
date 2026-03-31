@@ -147,8 +147,10 @@ for f in ['tasmin','tasmax','tas']:
             UHI_seasonal[f][m][s]['T'] = UHI_seasonal[f][m][s]['UHI']/UHI_seasonal[f][m][s]['SE']               # t-statistic
             UHI_seasonal[f][m][s]['PVAL'] = 2*(1 - stats.t.cdf(abs(UHI_seasonal[f][m][s]['T']), n-1))           # 2-sided p-value
             UHI_seasonal[f][m][s]['ERR'] = stats.t.ppf(1 - alpha/2, n-1)*UHI_seasonal[f][m][s]['SE']            # error bars at 1-alpha = 95% confidence
+            UHI_seasonal[f][m][s]['PERC'] = np.percentile(UHI_seasonal[f][m][s]['UHI'],[5,95])                  # 5th and 95th percentiles
 
             # temp statistics
             temps_seasonal[f][m][s]['vals'] = temps_Y[f][m][s].mean(dim='year').values                          # tempperature at each station
             temps_seasonal[f][m][s]['SE'] = (temps_Y[f][m][s].std(dim='year',ddof=1)/np.sqrt(n)).values         # Standard error
             temps_seasonal[f][m][s]['ERR'] = stats.t.ppf(1 - alpha/2, n-1)*temps_seasonal[f][m][s]['SE']        # error bars at 1-alpha = 95% confidence
+            UHI_seasonal[f][m][s]['PERC'] = np.percentile(temps_seasonal[f][m][s]['vals'],[5,95])
