@@ -6,7 +6,7 @@ UHI_seasonal and temps_seasonal accessed by [field = tasmin/tasmax][model = C/T]
 
 This module computes seasonal and interannual Urban Heat Island (UHI) statistics from observational station data and simulated model output.
 UHI is defined as the difference between spatially averaged urban and rural near-surface (2m in model) air temperatures from point-based 
-station locations.
+station locations. These temperatures are adjusted to a common elevation of 54.5m using a dry adiabatic lapse rate.
 
 Daily UHI time series are aggregated to seasonal means for each year, and statistical inference is performed across years to account for
 temporal autocorrelation in daily temperature data.
@@ -17,6 +17,7 @@ Analysis produces:
 - Interannual standard error, t-statistics, and 95% confidence intervals for each season, temperature variable, and data source for 
   UHI/temperatures
 - p-values for UHI
+- Calculation of 10-90th inter-percentile ranges
 
 All hypothesis tests are two-sided:
     H0: mean seasonal UHI = 0
@@ -26,6 +27,7 @@ All hypothesis tests are two-sided:
 - Daily data are not treated as independent samples.
 - Statistical inference is based on interannual variability of seasonal means, treating each year as an independent realisation.
 - Missing/masked data are handled implicitly via xarray groupby/count logic.
+- Point-based model extractions are subject to a 1.5 cell standard deviation Gaussian blur as is convention for this project.
 """
 
 from Montreal_UHI_toolbox import obs, obs_rural, obs_urban, adjust_temp, add_blurred_field_to_stations, static_fields_C
