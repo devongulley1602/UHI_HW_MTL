@@ -1045,7 +1045,7 @@ def draw_map_layers(fields=[],cmap_name_array=[],vmins=[],vmaxs=[],num_level_arr
     m.get_root().add_child(ColorbarToggleScript(field_names))
     return m
 
-def plot_field(field,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6,bounding_region=None, MTL_focus=False,domain='1km',lat_lon_tick=1):
+def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6,bounding_region=None, MTL_focus=False,domain='1km',lat_lon_tick=1,mesh_alpha=1.0):
     """
     Plots a 2D xarray DataArray field over a cartopy map with a discrete colorbar and regional political and lake features.
     
@@ -1097,7 +1097,8 @@ def plot_field(field,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_lab
         #                 pole_latitude=fix_fields.rotated_pole.grid_north_pole_latitude)
         # proj = ccrs.Orthographic(central_longitude=centre_lon, central_latitude=centre_lat)
     
-    fig, ax = plt.subplots(figsize=(10,10),subplot_kw={'projection': proj})
+    if fig == None and ax == None:
+        fig, ax = plt.subplots(figsize=(10,10),subplot_kw={'projection': proj})
 
     if domain == '1km' :
         lakefield = veg_fields.sel(lev='3') # For drawing identifiable contours on the map selected for readability
@@ -1139,7 +1140,7 @@ def plot_field(field,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_lab
     cbar_norm = mpl.colors.BoundaryNorm(bins, cmap.N)
 
     # Holds the field itself
-    mesh = ax.pcolormesh(field.lon.values, field.lat.values, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True)
+    mesh = ax.pcolormesh(field.lon.values, field.lat.values, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True,alpha=mesh_alpha)
             
     cb = fig.colorbar(ScalarMappable(norm=cbar_norm, cmap=cmap),ax=ax,
                       spacing=spacing,
