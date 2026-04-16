@@ -5,16 +5,12 @@ Corresponding respectively to CLASS, TEB+CLASS, and Observed min/max daily tempe
 
 When averaging stations from these sets be sure to check for 80% station data availability threshold.
 """
-
 import xarray as xr
 import numpy as np
-from Montreal_UHI_toolbox import static_fields_C, add_field_to_stations, add_blurred_field_to_stations, obs, adjust_temp, Z_a
+from Montreal_UHI_toolbox import static_fields_C, add_field_to_stations, add_blurred_field_to_stations, obs, obs_urban, obs_rural, adjust_temp, Z_a
 from UHI_statistics import load_daily_simobs
 
-# Managing different elevations for temperature, temperature adjustments are performed in the final step of any rendering
-# Based constant DABL assumption
 # Extract blurred orography (effective model elevation) from simulation data at station points
-adjustment_set = {}
 adjustment_set = add_blurred_field_to_stations(static_fields_C['orog'],station_set = obs)
 
 Z_b_model = adjustment_set['orog_blurred_std1p5'].values 
@@ -26,8 +22,15 @@ print(f'elev (m) for each actual station:\n{Z_b_obs}\n...to be scaled to {Z_a}m'
 
 # Load all station data 
 adjusted = obs
-adjusted_urban = obs_urban
-adjusted_rural = obs_rural
 
-# Adjust station data
-.copy(data=adjust_temp(rural_S.tasmax.values + 273.15, elev_rural)[0] - 273.15)
+# Adjust minimum and maximum daily temperatures from observed elevation
+adjusted = adjusted.assign_coords({'tasmin_S': (('station','time'), adjust_temp(adjusted.tasmin.values + 273.15, z_b = Z_b_obs) - 273.15  )})
+adjusted = adjusted.assign_coords({'tasmax_S': (('station','time'), adjust_temp(adjusted.tasmax.values + 273.15, z_b = Z_b_obs) - 273.15  )})
+adjusted = adjusted.reset_coords(['tasmin_S', 'tasmax_S'])
+
+# Adjust minimum and maximum daily temperatures from model orography
+for f in ['tasmin','tasmax']:
+    for m in ['C','T']:
+        adjusted = adjusted.assign_coords({f'{f}_{m}': (('time','station') , load_daily_simobs(f, m).values )})
+        adjusted = adjusted.reset_coords(f'{f}_{m}')
+
