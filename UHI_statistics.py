@@ -145,6 +145,7 @@ for f in ['tasmin','tasmax','tas']:
 
             # UHI statistics
             UHI_seasonal[f][m][s]['UHI'] = UHI_Y[f][m][s].mean(dim='year').values                               # UHI
+            UHI_seasonal[f][m][s]['STD'] = UHI_Y[f][m][s].std(dim='year').values                                # Standard deviation
             UHI_seasonal[f][m][s]['SE'] = (UHI_Y[f][m][s].std(dim='year',ddof=1)/np.sqrt(n)).values             # Standard error
             UHI_seasonal[f][m][s]['T'] = UHI_seasonal[f][m][s]['UHI']/UHI_seasonal[f][m][s]['SE']               # t-statistic
             UHI_seasonal[f][m][s]['PVAL'] = 2*(1 - stats.t.cdf(abs(UHI_seasonal[f][m][s]['T']), n-1))           # 2-sided p-value

@@ -1045,7 +1045,7 @@ def draw_map_layers(fields=[],cmap_name_array=[],vmins=[],vmaxs=[],num_level_arr
     m.get_root().add_child(ColorbarToggleScript(field_names))
     return m
 
-def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6,bounding_region=None, MTL_focus=False,domain='1km',lat_lon_tick=1,mesh_alpha=1.0):
+def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,vmax=None,cbar_label='',title='',proj=None,feature_colours='grey',extend='both',spacing='proportional',bins=None,labelsize=6,bounding_region=None, MTL_focus=False,domain='1km',lat_lon_tick=1,mesh_alpha=1.0,hatch=None,zorder=0):
     """
     Plots a 2D xarray DataArray field over a cartopy map with a discrete colorbar and regional political and lake features.
     
@@ -1087,9 +1087,9 @@ def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,
     -----
     - If bins is not provided, they can be inferred using vmin, vmax, and number of levels.
     - Designed for use with CLASS lake features compatible with Cartopy projections.
+    - Hatching works on numerical boolean arrays by contouring values of 1. Leave as None to ignore this feature.
     """
 
-    
     if proj == None:
         proj = ccrs.NearsidePerspective(central_longitude=centre_lon, central_latitude=centre_lat)
         # proj = ccrs.RotatedPole(pole_longitude=106.425, pole_latitude=44.5)
@@ -1115,14 +1115,14 @@ def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,
         # Add features from smoothed CLASS lake field contours
         lake_features = ax.contour(field.lon.values,field.lat.values,lakefield,transform=ccrs.PlateCarree(),
                                 levels=[0.2,1.0],
-                                colors=feature_colours,zorder=2,linewidths=[0.5])
-        ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=2)
+                                colors=feature_colours,linewidths=[0.5],zorder=zorder+1)
+        ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=zorder+1)
     
     if domain == '12km' or domain == '2.5km':
-        ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=2,alpha=0.5)
-        ax.add_feature(cfeature.LAKES.with_scale('50m'),edgecolor=feature_colours,linewidth=0.5,zorder=2,alpha=0.5)
-        ax.add_feature(cfeature.RIVERS.with_scale('50m'),edgecolor=feature_colours,linewidth=0.5,zorder=2,alpha=0.5)
-        ax.add_feature(cfeature.OCEAN,edgecolor=feature_colours,linewidth=0.5,zorder=2,alpha=0.5)
+        ax.add_feature(cfeature.BORDERS,edgecolor=feature_colours,linewidth=0.5,zorder=zorder+1,alpha=0.5)
+        ax.add_feature(cfeature.LAKES.with_scale('50m'),edgecolor=feature_colours,linewidth=0.5,zorder=zorder+1,alpha=0.5)
+        ax.add_feature(cfeature.RIVERS.with_scale('50m'),edgecolor=feature_colours,linewidth=0.5,zorder=zorder+1,alpha=0.5)
+        ax.add_feature(cfeature.OCEAN,edgecolor=feature_colours,linewidth=0.5,zorder=zorder+1,alpha=0.5)
 
     if num_levels is None:
         num_levels = 10
@@ -1139,37 +1139,50 @@ def plot_field(field,fig=None, ax=None,cmap='viridis',num_levels=None,vmin=None,
     cmap = plt.get_cmap(cmap,num_levels)
     cbar_norm = mpl.colors.BoundaryNorm(bins, cmap.N)
 
-    # Holds the field itself
-    mesh = ax.pcolormesh(field.lon.values, field.lat.values, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=1, rasterized=True,alpha=mesh_alpha)
-            
-    cb = fig.colorbar(ScalarMappable(norm=cbar_norm, cmap=cmap),ax=ax,
-                      spacing=spacing,
-                      orientation='vertical',
-                      extend=extend,
-                      shrink=0.73)
-    cb.set_label(label=cbar_label,
-                 rotation=0)
-                 # labelpad=20)
-    cb.ax.tick_params(labelsize=labelsize)
+    # Use contourf for hatching boolean field
+    if hatch != None:
+        cs = ax.contourf(
+            field.lon.values, 
+            field.lat.values, 
+            field,
+            transform=ccrs.PlateCarree(),
+            hatches=[hatch],
+            colors='none',     
+            zorder=zorder
+        )
+        cb = None
+    else: 
+        # Holds the field itself
+        mesh = ax.pcolormesh(field.lon.values, field.lat.values, field, transform=ccrs.PlateCarree(),cmap=cmap,norm=cbar_norm,zorder=zorder, rasterized=True,alpha=mesh_alpha)
+
+        cb = fig.colorbar(ScalarMappable(norm=cbar_norm, cmap=cmap),ax=ax,
+                        spacing=spacing,
+                        orientation='vertical',
+                        extend=extend,
+                        shrink=0.73)
+        cb.set_label(label=cbar_label,
+                    rotation=0)
+                    # labelpad=20)
+        cb.ax.tick_params(labelsize=labelsize)
+        
+        if extend=='both' or extend=='max':
+            cb.ax.yaxis.set_label_coords(0.5, 1.08) 
+        else:
+            cb.ax.yaxis.set_label_coords(0.5, 1.03) 
+
+        # Gridline configuration
+        gl = ax.gridlines(draw_labels=True, crs=ccrs.PlateCarree(), linewidth=0.5, color=feature_colours, linestyle='--',zorder=zorder)
+        gl.xlocator = mticker.FixedLocator(np.arange(-180, 180, lat_lon_tick))  # longitude ticks
+        gl.ylocator = mticker.FixedLocator(np.arange(-90, 90, lat_lon_tick))    # latitude ticks
+        gl.top_labels = False
+        gl.right_labels = False
+        gl.xlabel_style = {'size': 9}
+        gl.ylabel_style = {'size': 9}
+        ax.axis('off')
+        fig.tight_layout()
+
+        ax.add_artist(ScaleBar(1,box_alpha=0,color=feature_colours,location='lower right'))
     
-    if extend=='both' or extend=='max':
-        cb.ax.yaxis.set_label_coords(0.5, 1.08) 
-    else:
-        cb.ax.yaxis.set_label_coords(0.5, 1.03) 
-
-    # Gridline configuration
-    gl = ax.gridlines(draw_labels=True, crs=ccrs.PlateCarree(), linewidth=0.5, color=feature_colours, linestyle='--')
-    gl.xlocator = mticker.FixedLocator(np.arange(-180, 180, lat_lon_tick))  # longitude ticks
-    gl.ylocator = mticker.FixedLocator(np.arange(-90, 90, lat_lon_tick))    # latitude ticks
-    gl.top_labels = False
-    gl.right_labels = False
-    gl.xlabel_style = {'size': 9}
-    gl.ylabel_style = {'size': 9}
-    ax.axis('off')
-    fig.tight_layout()
-
-    ax.add_artist(ScaleBar(1,box_alpha=0,color=feature_colours,location='lower right'))
-
     plt.title(title)
     return fig,ax,cb
 
