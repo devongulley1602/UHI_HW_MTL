@@ -8,7 +8,7 @@ When averaging stations from these sets be sure to check for 80% station data av
 import xarray as xr
 import numpy as np
 from Montreal_UHI_toolbox import static_fields_C, add_field_to_stations, add_blurred_field_to_stations, obs, obs_urban, obs_rural, adjust_temp, Z_a
-from UHI_statistics import load_daily_simobs
+from UHI_statistics import load_daily_simobs, avail_thresh
 
 # Extract blurred orography (effective model elevation) from simulation data at station points
 adjustment_set = add_blurred_field_to_stations(static_fields_C['orog'],station_set = obs)
@@ -34,3 +34,8 @@ for f in ['tasmin','tasmax']:
         adjusted = adjusted.assign_coords({f'{f}_{m}': (('time','station') , load_daily_simobs(f, m).values )})
         adjusted = adjusted.reset_coords(f'{f}_{m}')
 
+n_years = 23
+# Get the heat extremes of jja for which the minimum station data availability is > 80% (the avail_thresh)
+extremes = adjusted.where(adjusted.count(dim='station') >= len(adjusted.station)*avail_thresh,drop=True).drop_vars(['tasmin', 'tasmax','tas','elev']).sel(time=adjusted.time.dt.season == 'JJA').mean(dim='station')
+q99 = extremes.quantile(0.99).drop_vars('quantile')
+extremes = extremes.where(extremes >= q99,drop=True)
